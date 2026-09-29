@@ -470,15 +470,15 @@ def render_market(name, market):
             )
 
         return signal
-
+ 
     except Exception as e:
 
-    st.error(f"Data error for {name}")
+        st.error(f"Data error for {name}")
 
-    with st.expander("Technical details"):
-        st.code(str(e))
+        with st.expander("Technical details"):
+            st.code(str(e))
 
-    return None
+        return None
 
 
 # ============================================================
