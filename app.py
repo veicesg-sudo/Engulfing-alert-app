@@ -5,17 +5,17 @@ import requests
 from datetime import datetime, timezone
 
 # ============================================================
-# APP CONFIG
+# APP SETTINGS
 # ============================================================
 
 st.set_page_config(
-    page_title="Engulfing Alert Scanner",
-    page_icon="📈",
+    page_title="15M Engulfing Alert",
+    page_icon="📊",
     layout="wide"
 )
 
-st.title("📈 15-Minute Engulfing Alert Scanner")
-st.caption("Manual trading only — this app never places trades.")
+st.title("📊 15-Minute Engulfing Alert")
+st.caption("Manual trading assistant — alerts only. No automatic trades.")
 
 # ============================================================
 # TWELVE DATA
@@ -23,80 +23,8 @@ st.caption("Manual trading only — this app never places trades.")
 
 API_KEY = st.secrets.get("TWELVE_DATA_API_KEY", "")
 
-if not API_KEY:
-    st.error("Twelve Data API key is missing from Streamlit Secrets.")
-    st.stop()
-
 BASE_URL = "https://api.twelvedata.com/time_series"
-SYMBOL_SEARCH_URL = "https://api.twelvedata.com/symbol_search"
 
-
-def search_symbols(query):
-    params = {
-        "symbol": query,
-        "outputsize": 20,
-        "show_plan": True
-    }
-
-    headers = {
-        "Authorization": f"apikey {API_KEY}"
-    }
-
-    response = requests.get(
-        SYMBOL_SEARCH_URL,
-        params=params,
-        headers=headers,
-        timeout=15
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    if data.get("status") == "error":
-        raise RuntimeError(
-            data.get("message", "Symbol search failed.")
-        )
-
-    return data.get("data", [])
-
-st.divider()
-
-st.header("🔎 Find XM Market Symbols")
-
-if st.button("Find US100 / NASDAQ"):
-    try:
-        results = search_symbols("US100 NASDAQ")
-
-        if results:
-            st.dataframe(
-                pd.DataFrame(results),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.warning("No US100/NASDAQ symbols found.")
-
-    except Exception as e:
-        st.error(f"US100 search error: {e}")
-
-
-if st.button("Find US30 / Dow Jones"):
-    try:
-        results = search_symbols("US30 Dow Jones")
-
-        if results:
-            st.dataframe(
-                pd.DataFrame(results),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.warning("No US30/Dow Jones symbols found.")
-
-    except Exception as e:
-        st.error(f"US30 search error: {e}")
-# These are the Twelve Data symbols we can use directly.
 MARKETS = {
     "XAUUSD": {
         "name": "Gold",
@@ -105,109 +33,54 @@ MARKETS = {
     "BTCUSD": {
         "name": "Bitcoin",
         "symbol": "BTC/USD"
-    },
-    "OIL": {
-        "name": "WTI Oil",
-        "symbol": "WTI/USD"
-    },
-
-    # IMPORTANT:
-    # We will verify the exact NAS100/NASDAQ symbol separately.
-    "NASDAQ": {
-        "name": "NASDAQ / NAS100",
-        "symbol": "NDX"
     }
 }
 
-
 # ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.header("Strategy Settings")
-
-strict_mode = st.sidebar.checkbox(
-    "Strict mode",
-    value=True
-)
-
-body_ratio = st.sidebar.number_input(
-    "Minimum engulfing body ratio",
-    min_value=1.0,
-    max_value=3.0,
-    value=1.2,
-    step=0.1
-)
-
-ema_fast_period = st.sidebar.number_input(
-    "Fast EMA",
-    min_value=5,
-    max_value=100,
-    value=50,
-    step=1
-)
-
-ema_slow_period = st.sidebar.number_input(
-    "Slow EMA",
-    min_value=50,
-    max_value=300,
-    value=200,
-    step=1
-)
-
-atr_period = st.sidebar.number_input(
-    "ATR period",
-    min_value=5,
-    max_value=50,
-    value=14,
-    step=1
-)
-
-sl_atr_multiplier = st.sidebar.number_input(
-    "SL = ATR ×",
-    min_value=0.5,
-    max_value=5.0,
-    value=1.5,
-    step=0.1
-)
-
-risk_reward = st.sidebar.number_input(
-    "Risk / Reward",
-    min_value=1.0,
-    max_value=5.0,
-    value=2.0,
-    step=0.5
-)
-
-refresh_seconds = st.sidebar.number_input(
-    "Refresh interval (seconds)",
-    min_value=15,
-    max_value=300,
-    value=60,
-    step=15
-)
-
-
-# ============================================================
-# DATA FUNCTIONS
+# STRATEGY SETTINGS
 # ============================================================
 
-@st.cache_data(ttl=45)
-def get_candles(symbol, outputsize=300):
+TIMEFRAME = "15min"
+BODY_RATIO = 1.2
+ATR_PERIOD = 14
+EMA_FAST = 50
+EMA_SLOW = 200
+SL_ATR_MULTIPLIER = 1.5
+RISK_REWARD = 2.0
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+if "signals" not in st.session_state:
+    st.session_state.signals = []
+
+if "last_signal" not in st.session_state:
+    st.session_state.last_signal = {}
+
+# ============================================================
+# FUNCTIONS
+# ============================================================
+
+def get_data(symbol):
+    """Download 15-minute candles from Twelve Data."""
+
+    if not API_KEY:
+        raise RuntimeError(
+            "TWELVE_DATA_API_KEY is missing from Streamlit Secrets."
+        )
 
     params = {
         "symbol": symbol,
-        "interval": "15min",
-        "outputsize": outputsize,
-        "timezone": "UTC",
-        "order": "asc",
+        "interval": TIMEFRAME,
+        "outputsize": 300,
         "apikey": API_KEY
     }
 
     response = requests.get(
         BASE_URL,
         params=params,
-        timeout=15
+        timeout=20
     )
 
     response.raise_for_status()
@@ -221,153 +94,153 @@ def get_candles(symbol, outputsize=300):
 
     if "values" not in data:
         raise RuntimeError(
-            "No candle data returned."
+            "No candle data was returned."
         )
 
     df = pd.DataFrame(data["values"])
 
     if df.empty:
         raise RuntimeError(
-            "Empty candle response."
+            "No market data was returned."
         )
 
-    df["datetime"] = pd.to_datetime(
-        df["datetime"],
-        utc=True
-    )
-
+    # Convert prices to numbers
     for column in ["open", "high", "low", "close"]:
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
         )
 
-    df = df.dropna(
-        subset=["open", "high", "low", "close"]
+    # Convert timestamp
+    df["datetime"] = pd.to_datetime(
+        df["datetime"],
+        utc=True,
+        errors="coerce"
     )
 
-    df = df.sort_values("datetime")
-    df = df.reset_index(drop=True)
+    df = df.dropna(
+        subset=[
+            "datetime",
+            "open",
+            "high",
+            "low",
+            "close"
+        ]
+    )
+
+    df = df.sort_values("datetime").reset_index(drop=True)
+
+    # --------------------------------------------------------
+    # ONLY USE COMPLETED 15-MINUTE CANDLES
+    # --------------------------------------------------------
+
+    now = pd.Timestamp.now(tz="UTC")
+
+    current_bucket = now.floor("15min")
+
+    df = df[df["datetime"] < current_bucket].copy()
 
     return df
 
 
-# ============================================================
-# INDICATORS
-# ============================================================
-
 def calculate_indicators(df):
+    """Calculate EMA and ATR."""
 
     df = df.copy()
 
-    df["ema_fast"] = (
-        df["close"]
-        .ewm(
-            span=ema_fast_period,
-            adjust=False
-        )
-        .mean()
-    )
+    df["ema50"] = df["close"].ewm(
+        span=EMA_FAST,
+        adjust=False
+    ).mean()
 
-    df["ema_slow"] = (
-        df["close"]
-        .ewm(
-            span=ema_slow_period,
-            adjust=False
-        )
-        .mean()
-    )
+    df["ema200"] = df["close"].ewm(
+        span=EMA_SLOW,
+        adjust=False
+    ).mean()
 
     previous_close = df["close"].shift(1)
 
-    true_range = pd.concat(
+    true_range_1 = df["high"] - df["low"]
+    true_range_2 = (
+        df["high"] - previous_close
+    ).abs()
+
+    true_range_3 = (
+        df["low"] - previous_close
+    ).abs()
+
+    df["tr"] = pd.concat(
         [
-            df["high"] - df["low"],
-            (df["high"] - previous_close).abs(),
-            (df["low"] - previous_close).abs()
+            true_range_1,
+            true_range_2,
+            true_range_3
         ],
         axis=1
     ).max(axis=1)
 
-    df["atr"] = (
-        true_range
-        .rolling(atr_period)
-        .mean()
-    )
+    df["atr"] = df["tr"].rolling(
+        ATR_PERIOD
+    ).mean()
 
     return df
 
 
-# ============================================================
-# ENGULFING DETECTOR
-# ============================================================
-
 def detect_signal(df):
+    """Check the most recently completed candle."""
 
-    if len(df) < max(
-        ema_slow_period + 5,
-        atr_period + 5,
-        10
-    ):
+    if len(df) < EMA_SLOW + 5:
         return None
 
-    # IMPORTANT:
-    # We ignore the newest candle because it may still be forming.
-    #
-    # The last COMPLETED candle is therefore -2.
-    #
-    # The candle before it is -3.
-
-    previous = df.iloc[-3]
-    current = df.iloc[-2]
-
-    current_body = abs(
-        current["close"] - current["open"]
-    )
+    previous = df.iloc[-2]
+    current = df.iloc[-1]
 
     previous_body = abs(
         previous["close"] - previous["open"]
     )
 
+    current_body = abs(
+        current["close"] - current["open"]
+    )
+
     if previous_body == 0:
         return None
 
-    body_ratio_actual = (
+    body_ratio = (
         current_body / previous_body
     )
 
+    # --------------------------------------------------------
+    # BULLISH ENGULFING
+    # --------------------------------------------------------
+
     bullish_engulfing = (
         previous["close"] < previous["open"]
-        and
-        current["close"] > current["open"]
-        and
-        current["open"] <= previous["close"]
-        and
-        current["close"] >= previous["open"]
+        and current["close"] > current["open"]
+        and current["open"] <= previous["close"]
+        and current["close"] >= previous["open"]
+        and body_ratio >= BODY_RATIO
     )
+
+    # --------------------------------------------------------
+    # BEARISH ENGULFING
+    # --------------------------------------------------------
 
     bearish_engulfing = (
         previous["close"] > previous["open"]
-        and
-        current["close"] < current["open"]
-        and
-        current["open"] >= previous["close"]
-        and
-        current["close"] <= previous["open"]
+        and current["close"] < current["open"]
+        and current["open"] >= previous["close"]
+        and current["close"] <= previous["open"]
+        and body_ratio >= BODY_RATIO
     )
 
-    if strict_mode:
-        if body_ratio_actual < body_ratio:
-            return None
-
-    ema50 = current["ema_fast"]
-    ema200 = current["ema_slow"]
     atr = current["atr"]
 
-    if pd.isna(ema50) or pd.isna(ema200) or pd.isna(atr):
+    if pd.isna(atr):
         return None
 
-    entry = float(current["close"])
+    close = current["close"]
+    ema50 = current["ema50"]
+    ema200 = current["ema200"]
 
     # --------------------------------------------------------
     # BUY
@@ -375,32 +248,35 @@ def detect_signal(df):
 
     if bullish_engulfing:
 
-        if strict_mode:
-
-            if not (
-                entry > ema50 > ema200
-            ):
-                return None
-
-        stop_loss = entry - (
-            sl_atr_multiplier * atr
+        trend_confirmed = (
+            close > ema50
+            and ema50 > ema200
         )
 
-        risk = entry - stop_loss
+        if trend_confirmed:
 
-        take_profit = entry + (
-            risk_reward * risk
-        )
+            entry = close
+            sl = entry - (
+                SL_ATR_MULTIPLIER * atr
+            )
 
-        return {
-            "direction": "BUY",
-            "time": current["datetime"],
-            "entry": entry,
-            "sl": stop_loss,
-            "tp": take_profit,
-            "atr": float(atr),
-            "body_ratio": float(body_ratio_actual)
-        }
+            risk = entry - sl
+
+            tp = entry + (
+                RISK_REWARD * risk
+            )
+
+            return {
+                "signal": "BUY",
+                "time": current["datetime"],
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "atr": atr,
+                "body_ratio": body_ratio,
+                "ema50": ema50,
+                "ema200": ema200
+            }
 
     # --------------------------------------------------------
     # SELL
@@ -408,240 +284,356 @@ def detect_signal(df):
 
     if bearish_engulfing:
 
-        if strict_mode:
-
-            if not (
-                entry < ema50 < ema200
-            ):
-                return None
-
-        stop_loss = entry + (
-            sl_atr_multiplier * atr
+        trend_confirmed = (
+            close < ema50
+            and ema50 < ema200
         )
 
-        risk = stop_loss - entry
+        if trend_confirmed:
 
-        take_profit = entry - (
-            risk_reward * risk
-        )
+            entry = close
+            sl = entry + (
+                SL_ATR_MULTIPLIER * atr
+            )
 
-        return {
-            "direction": "SELL",
-            "time": current["datetime"],
-            "entry": entry,
-            "sl": stop_loss,
-            "tp": take_profit,
-            "atr": float(atr),
-            "body_ratio": float(body_ratio_actual)
-        }
+            risk = sl - entry
+
+            tp = entry - (
+                RISK_REWARD * risk
+            )
+
+            return {
+                "signal": "SELL",
+                "time": current["datetime"],
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "atr": atr,
+                "body_ratio": body_ratio,
+                "ema50": ema50,
+                "ema200": ema200
+            }
 
     return None
 
 
+def format_price(value):
+    """Format prices cleanly."""
+
+    if value >= 1000:
+        return f"{value:,.2f}"
+
+    if value >= 100:
+        return f"{value:,.2f}"
+
+    if value >= 1:
+        return f"{value:,.2f}"
+
+    return f"{value:,.5f}"
+
+
 # ============================================================
-# MARKET CARD
+# SIDEBAR
 # ============================================================
 
-def render_market(name, market):
+st.sidebar.header("⚙️ Strategy")
 
-    st.subheader(name)
+st.sidebar.write(
+    f"Timeframe: **{TIMEFRAME}**"
+)
 
-    try:
+st.sidebar.write(
+    f"Minimum body ratio: **{BODY_RATIO}×**"
+)
 
-        df = get_candles(
-            market["symbol"],
-            outputsize=300
+st.sidebar.write(
+    f"ATR: **{ATR_PERIOD}**"
+)
+
+st.sidebar.write(
+    f"SL: **{SL_ATR_MULTIPLIER}× ATR**"
+)
+
+st.sidebar.write(
+    f"TP: **{RISK_REWARD}R**"
+)
+
+st.sidebar.divider()
+
+st.sidebar.warning(
+    "Manual trading only. "
+    "This app does not place orders."
+)
+
+# ============================================================
+# REFRESH
+# ============================================================
+
+if st.button(
+    "🔄 Refresh Markets",
+    use_container_width=True
+):
+
+    st.rerun()
+
+st.caption(
+    "Refresh the app after a 15-minute candle closes "
+    "to check for a new signal."
+)
+
+# ============================================================
+# API CHECK
+# ============================================================
+
+if not API_KEY:
+
+    st.error(
+        "⚠️ Twelve Data API key not found."
+    )
+
+    st.info(
+        "Add TWELVE_DATA_API_KEY to Streamlit Secrets."
+    )
+
+    st.stop()
+
+# ============================================================
+# MARKET DASHBOARD
+# ============================================================
+
+st.header("Markets")
+
+columns = st.columns(2)
+
+for index, (market_code, market) in enumerate(
+    MARKETS.items()
+):
+
+    with columns[index]:
+
+        st.subheader(
+            f"{'🥇' if market_code == 'XAUUSD' else '₿'} "
+            f"{market['name']}"
         )
 
-        df = calculate_indicators(df)
+        try:
 
-        # Latest completed candle
-        completed = df.iloc[-2]
+            df = get_data(
+                market["symbol"]
+            )
 
-        signal = detect_signal(df)
+            df = calculate_indicators(df)
 
-        col1, col2, col3 = st.columns(3)
+            signal = detect_signal(df)
 
-        with col1:
+            latest = df.iloc[-1]
+
+            # ------------------------------------------------
+            # CURRENT MARKET INFORMATION
+            # ------------------------------------------------
+
             st.metric(
-                "Last price",
-                f"{completed['close']:,.5f}"
+                "Last completed candle",
+                format_price(latest["close"])
             )
 
-        with col2:
-            st.metric(
-                "EMA 50",
-                f"{completed['ema_fast']:,.5f}"
+            trend = "NEUTRAL"
+
+            if (
+                latest["close"] > latest["ema50"]
+                and latest["ema50"] > latest["ema200"]
+            ):
+                trend = "BULLISH"
+
+            elif (
+                latest["close"] < latest["ema50"]
+                and latest["ema50"] < latest["ema200"]
+            ):
+                trend = "BEARISH"
+
+            st.write(
+                f"**Trend:** {trend}"
             )
 
-        with col3:
-            st.metric(
-                "EMA 200",
-                f"{completed['ema_slow']:,.5f}"
+            st.write(
+                f"EMA 50: `{format_price(latest['ema50'])}`"
             )
 
-        st.caption(
-            "Last completed candle: "
-            + completed["datetime"].strftime(
-                "%Y-%m-%d %H:%M UTC"
+            st.write(
+                f"EMA 200: `{format_price(latest['ema200'])}`"
             )
-        )
 
-        if signal:
+            st.write(
+                f"ATR(14): `{format_price(latest['atr'])}`"
+            )
 
-            direction = signal["direction"]
+            st.write(
+                "Last candle: "
+                f"`{latest['datetime'].strftime('%Y-%m-%d %H:%M UTC')}`"
+            )
 
-            if direction == "BUY":
-                st.success("🟢 BUY ALERT")
+            # ------------------------------------------------
+            # SIGNAL
+            # ------------------------------------------------
+
+            if signal:
+
+                signal_time = str(
+                    signal["time"]
+                )
+
+                signal_key = (
+                    market_code,
+                    signal_time,
+                    signal["signal"]
+                )
+
+                already_seen = (
+                    signal_key
+                    in st.session_state.last_signal
+                )
+
+                if not already_seen:
+
+                    st.session_state.last_signal[
+                        signal_key
+                    ] = True
+
+                    st.session_state.signals.append(
+                        {
+                            "Market": market["name"],
+                            "Symbol": market_code,
+                            "Signal": signal["signal"],
+                            "Time": signal["time"],
+                            "Entry": signal["entry"],
+                            "Stop Loss": signal["sl"],
+                            "Take Profit": signal["tp"],
+                            "ATR": signal["atr"],
+                            "Body Ratio": signal["body_ratio"]
+                        }
+                    )
+
+                if signal["signal"] == "BUY":
+
+                    st.success(
+                        "🟢 BUY SIGNAL"
+                    )
+
+                else:
+
+                    st.error(
+                        "🔴 SELL SIGNAL"
+                    )
+
+                st.write(
+                    f"**Entry:** "
+                    f"`{format_price(signal['entry'])}`"
+                )
+
+                st.write(
+                    f"**Suggested SL:** "
+                    f"`{format_price(signal['sl'])}`"
+                )
+
+                st.write(
+                    f"**Suggested TP:** "
+                    f"`{format_price(signal['tp'])}`"
+                )
+
+                st.write(
+                    f"**Body ratio:** "
+                    f"`{signal['body_ratio']:.2f}×`"
+                )
+
+                st.warning(
+                    "⚠️ This is an alert only. "
+                    "If you choose to trade, execute it manually "
+                    "in XM MT5."
+                )
+
             else:
-                st.error("🔴 SELL ALERT")
 
-            a, b, c, d = st.columns(4)
-
-            with a:
-                st.metric(
-                    "Entry",
-                    f"{signal['entry']:,.5f}"
+                st.info(
+                    "No confirmed signal on the latest "
+                    "completed candle."
                 )
 
-            with b:
-                st.metric(
-                    "Suggested SL",
-                    f"{signal['sl']:,.5f}"
-                )
+        except Exception as e:
 
-            with c:
-                st.metric(
-                    "Suggested TP",
-                    f"{signal['tp']:,.5f}"
-                )
-
-            with d:
-                st.metric(
-                    "Body ratio",
-                    f"{signal['body_ratio']:.2f}x"
-                )
-
-            st.info(
-                "Manual execution only. "
-                "Check the corresponding XM MT5 instrument "
-                "before placing any trade."
+            st.error(
+                f"Data error for {market['name']}"
             )
 
-        else:
+            with st.expander(
+                "Technical details"
+            ):
 
-            st.info(
-                "No qualifying engulfing signal "
-                "on the latest completed 15-minute candle."
-            )
-
-        return signal
- 
-    except Exception as e:
-
-        st.error(f"Data error for {name}")
-
-        with st.expander("Technical details"):
-            st.code(str(e))
-
-        return None
-
+                st.code(str(e))
 
 # ============================================================
-# MAIN DASHBOARD
+# SIGNAL HISTORY
 # ============================================================
 
-signals = {}
+st.divider()
 
-for key, market in MARKETS.items():
+st.header("📜 Signal History")
 
-    signals[key] = render_market(
-        market["name"],
-        market
+if st.session_state.signals:
+
+    history = pd.DataFrame(
+        st.session_state.signals
     )
 
-    st.divider()
-
-
-# ============================================================
-# ALERT HISTORY
-# ============================================================
-
-st.header("Alert History")
-
-if "alert_history" not in st.session_state:
-    st.session_state.alert_history = []
-
-
-for market_key, signal in signals.items():
-
-    if signal:
-
-        alert_id = (
-            f"{market_key}_"
-            f"{signal['direction']}_"
-            f"{signal['time']}"
-        )
-
-        existing_ids = [
-            x["id"]
-            for x in st.session_state.alert_history
-        ]
-
-        if alert_id not in existing_ids:
-
-            st.session_state.alert_history.insert(
-                0,
-                {
-                    "id": alert_id,
-                    "market": market_key,
-                    "direction": signal["direction"],
-                    "time": signal["time"],
-                    "entry": signal["entry"],
-                    "sl": signal["sl"],
-                    "tp": signal["tp"]
-                }
-            )
-
-
-if st.session_state.alert_history:
-
-    history_df = pd.DataFrame(
-        st.session_state.alert_history
-    )
-
-    history_df = history_df.drop(
-        columns=["id"],
-        errors="ignore"
+    history = history.sort_values(
+        "Time",
+        ascending=False
     )
 
     st.dataframe(
-        history_df,
+        history,
         use_container_width=True,
         hide_index=True
     )
 
 else:
 
-    st.info("No alerts detected yet.")
-
+    st.info(
+        "No signals detected during this app session."
+    )
 
 # ============================================================
-# AUTO REFRESH
+# STRATEGY RULES
 # ============================================================
 
-st.sidebar.markdown("---")
-st.sidebar.caption(
-    f"Auto-refresh target: {refresh_seconds}s"
-)
+st.divider()
+
+st.header("📋 Strategy Rules")
 
 st.markdown(
     """
-    <script>
-    setTimeout(function() {
-        window.location.reload();
-    }, %d);
-    </script>
-    """ % (refresh_seconds * 1000),
-    unsafe_allow_html=True
+**BUY**
+
+1. A completed bullish engulfing candle appears.
+2. Current candle body is at least **1.2×** the previous candle body.
+3. Close > EMA 50.
+4. EMA 50 > EMA 200.
+5. Suggested SL = **1.5 × ATR(14)** below entry.
+6. Suggested TP = **2R**.
+
+**SELL**
+
+1. A completed bearish engulfing candle appears.
+2. Current candle body is at least **1.2×** the previous candle body.
+3. Close < EMA 50.
+4. EMA 50 < EMA 200.
+5. Suggested SL = **1.5 × ATR(14)** above entry.
+6. Suggested TP = **2R**.
+
+**Important:** The app never sends an order to XM.
+"""
+)
+
+st.caption(
+    "Trading involves risk. This tool is for strategy alerts "
+    "and does not guarantee profitable results."
 )
