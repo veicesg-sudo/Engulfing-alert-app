@@ -28,8 +28,74 @@ if not API_KEY:
     st.stop()
 
 BASE_URL = "https://api.twelvedata.com/time_series"
+SYMBOL_SEARCH_URL = "https://api.twelvedata.com/symbol_search"
 
 
+def search_symbols(query):
+    params = {
+        "symbol": query,
+        "outputsize": 20,
+        "show_plan": True
+    }
+
+    headers = {
+        "Authorization": f"apikey {API_KEY}"
+    }
+
+    response = requests.get(
+        SYMBOL_SEARCH_URL,
+        params=params,
+        headers=headers,
+        timeout=15
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    if data.get("status") == "error":
+        raise RuntimeError(
+            data.get("message", "Symbol search failed.")
+        )
+
+    return data.get("data", [])
+
+st.divider()
+
+st.header("🔎 Find XM Market Symbols")
+
+if st.button("Find US100 / NASDAQ"):
+    try:
+        results = search_symbols("US100 NASDAQ")
+
+        if results:
+            st.dataframe(
+                pd.DataFrame(results),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.warning("No US100/NASDAQ symbols found.")
+
+    except Exception as e:
+        st.error(f"US100 search error: {e}")
+
+
+if st.button("Find US30 / Dow Jones"):
+    try:
+        results = search_symbols("US30 Dow Jones")
+
+        if results:
+            st.dataframe(
+                pd.DataFrame(results),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.warning("No US30/Dow Jones symbols found.")
+
+    except Exception as e:
+        st.error(f"US30 search error: {e}")
 # These are the Twelve Data symbols we can use directly.
 MARKETS = {
     "XAUUSD": {
